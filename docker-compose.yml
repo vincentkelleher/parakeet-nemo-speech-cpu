@@ -13,7 +13,7 @@ name: parakeet
 
 services:
   gateway:
-    image: ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0
+    image: ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0
     command:
       - python3
       - /opt/adapter/adapter.py
@@ -52,7 +52,7 @@ services:
       start_period: 120s
 
   engine:
-    image: ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0
+    image: ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0
     command:
       - /opt/nemo-speech/bin/nemo-speech
       - serve

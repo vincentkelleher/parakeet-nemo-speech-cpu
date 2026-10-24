@@ -3,6 +3,7 @@
 # in a layer.
 .git
 .gitignore
+.github
 .dockerignore
 README.md
 LICENSE

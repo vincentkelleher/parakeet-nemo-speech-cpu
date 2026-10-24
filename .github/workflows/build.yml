@@ -1,0 +1,98 @@
+name: build-and-publish
+
+# amd64 only, on purpose: what this image installs is
+# nemo-speech-<ver>-linux-x86_64-cpu.tar.gz. There is no arm64 build of the runtime, so
+# a multi-platform matrix would fail at the download step rather than the manifest step.
+# On Apple Silicon that is the same reason the README says to pass
+# --platform=linux/amd64 when building locally.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*", "[0-9]*"]
+  pull_request:
+
+permissions:
+  contents: read
+  # The workflow's own token, and no personal access token anywhere: the image is pushed
+  # to this repository's own GHCR namespace, which `packages: write` covers. The package
+  # inherits the repository's visibility, so on a public repo it pulls anonymously.
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Tagging decided here rather than with docker/metadata-action so the rule reads as
+      # one sentence: a version tag publishes <version> and moves :latest, a merge to main
+      # publishes :edge, a pull request builds and tests and publishes nothing. The image
+      # is always tagged, because the smoke test below needs to run it by name.
+      - name: Decide what to publish
+        id: tags
+        run: |
+          set -eu
+          version=""
+          case "$GITHUB_REF" in
+            refs/tags/*) version="${GITHUB_REF_NAME#v}" ;;
+          esac
+          if [ -n "$version" ]; then
+            { echo "tags=${IMAGE}:${version}"; echo "tags=${IMAGE}:latest";
+              echo "push=true";  echo "published=${IMAGE}:${version}"; } >>"$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            { echo "tags=${IMAGE}:edge"; echo "push=true";
+              echo "published=${IMAGE}:edge"; } >>"$GITHUB_OUTPUT"
+          else
+            { echo "tags=${IMAGE}:ci"; echo "push=false";
+              echo "published=${IMAGE}:ci"; } >>"$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.tags.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ steps.tags.outputs.push == 'true' }}
+          # And loaded, so the next step can run the image it just built instead of
+          # trusting the build's exit status. Legal to combine because there is exactly
+          # one platform here.
+          load: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Nothing is pinned here that the Dockerfile does not already pin; this is the
+          # version the archive checksum belongs to. If the two ever disagree the build
+          # fails at the sha256 step, which is the whole point of the checksum.
+          build-args: |
+            NEMO_SPEECH_VERSION=0.2.0
+
+      - name: Smoke test the image
+        run: |
+          set -eu
+          image="${{ steps.tags.outputs.published }}"
+          docker image inspect "$image" >/dev/null
+          docker run --rm --entrypoint /opt/nemo-speech/bin/nemo-speech "$image" --version
+          docker run --rm --entrypoint /opt/nemo-speech/bin/nemo-speech "$image" doctor
+          # The suite the README tells people to run — run here rather than promised. It
+          # needs ffmpeg for two cases, and this image has it, which is precisely why the
+          # tests belong in the image and not on the runner: the failure mode that shipped
+          # once (a bundled libstdc++ shadowing the system one, killing ffmpeg) is only
+          # visible inside it.
+          docker run --rm -v "$GITHUB_WORKSPACE:/t:ro" --entrypoint python3 \
+            "$image" -m unittest discover -s /t -p "test_*.py"
+          echo "published: $image"

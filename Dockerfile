@@ -11,11 +11,13 @@
 # NVIDIA publishes, signs and tests. The archive *is* the official CPU build; it is
 # pinned by sha256 below, so this file cannot silently pick up a different binary.
 #
-# Build (amd64 only — the runtime ships linux-x86_64. On Apple Silicon the platform
-# flag is what makes the failure happen here instead of at container start):
+# Published at ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu (public, pulls
+# anonymously) by .github/workflows/build.yml. To build it yourself — amd64 only, since
+# the runtime ships linux-x86_64; on Apple Silicon the platform flag is what makes the
+# failure happen here instead of at container start:
 #
 #   docker buildx build --platform=linux/amd64 \
-#       -t ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0 --load .
+#       -t ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0 --load .
 #
 # Upstream: https://github.com/NVIDIA/NeMo-Speech.cpp  (v0.2.0 = 6a3ca369)
 # Model:    https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3  (mounted at run time,

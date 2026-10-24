@@ -31,6 +31,31 @@ The result runs at **RTF ≈ 0.15 on a 2018 Intel i7-8700T** (6 cores, no AVX-51
 3 GiB. CPU inference here is not a compromise; it is the sensible choice for short
 recordings, and the reason a GPU has never been required for this.
 
+## Get the image
+
+Published by GitHub Actions to this repository's own GHCR namespace, public, pulled
+anonymously — no `docker login` anywhere in the quick start below:
+
+| Tag | What it is |
+| --- | --- |
+| `:0.2.0` | the version of NeMo-Speech.cpp these numbers were measured on |
+| `:latest` | moves with each version tag |
+| `:edge` | last merge to `main`; may not match the README |
+
+```bash
+docker pull ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0
+```
+
+Building from source is one command and produces the same thing, because the build
+verifies the sha256 of the NVIDIA archive it downloads before unpacking it — so a green
+build from either path means the same binaries, and a changed upstream asset fails the
+build rather than the container:
+
+```bash
+docker buildx build --platform=linux/amd64 \
+    -t ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0 --load .
+```
+
 ## Quick start
 
 amd64 only — the runtime ships `linux-x86_64`. On Apple Silicon everything below runs
@@ -42,8 +67,7 @@ mkdir -p models && curl -L -o models/parakeet-tdt-0.6b-v3.q8_0.gguf \
   https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf
 echo 'e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e  models/parakeet-tdt-0.6b-v3.q8_0.gguf' | sha256sum -c -
 
-# 2. build, then run
-docker buildx build --platform=linux/amd64 -t ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0 --load .
+# 2. run (the image pulls from GHCR; build it locally instead if you prefer)
 docker compose up -d
 
 # 3. wait for the weights (~10-30 s native, longer emulated), then transcribe
@@ -61,7 +85,7 @@ rather not have two:
 
 ```bash
 docker run --rm -p 8080:8080 -v "$PWD/models:/models:ro" --platform linux/amd64 \
-  ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0 bash -c '
+  ghcr.io/vincentkelleher/parakeet-nemo-speech-cpu:0.2.0 bash -c '
     /opt/nemo-speech/bin/nemo-speech serve --host 127.0.0.1 --port 8081 \
       --asr-model /models/parakeet-tdt-0.6b-v3.q8_0.gguf --device cpu --no-ui &
     python3 /opt/adapter/adapter.py --listen 0.0.0.0:8080 --upstream 127.0.0.1:8081'
