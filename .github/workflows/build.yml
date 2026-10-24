@@ -31,10 +31,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Tagging decided here rather than with docker/metadata-action so the rule reads as
-      # one sentence: a version tag publishes <version> and moves :latest, a merge to main
-      # publishes :edge, a pull request builds and tests and publishes nothing. The image
-      # is always tagged, because the smoke test below needs to run it by name.
+      # Tagging decided here rather than with metadata-action so the rule reads as one
+      # sentence: a version tag publishes <version> and moves :latest, a merge to main
+      # publishes :edge, a pull request builds and tests and publishes nothing.
+      #
+      # `primary` is the one tag the build loads and the smoke test runs; `extra` is a
+      # space-separated list retagged and pushed afterwards. Emitted as separate keys
+      # because $GITHUB_OUTPUT is last-value-wins on a repeated key — the first version of
+      # this step wrote `tags=` twice for a version tag and silently published only
+      # :latest, which the smoke test then caught by failing on a missing :0.2.0.
       - name: Decide what to publish
         id: tags
         run: |
@@ -44,15 +49,13 @@ jobs:
             refs/tags/*) version="${GITHUB_REF_NAME#v}" ;;
           esac
           if [ -n "$version" ]; then
-            { echo "tags=${IMAGE}:${version}"; echo "tags=${IMAGE}:latest";
-              echo "push=true";  echo "published=${IMAGE}:${version}"; } >>"$GITHUB_OUTPUT"
+            primary="${IMAGE}:${version}"; extra="${IMAGE}:latest"; push=true
           elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            { echo "tags=${IMAGE}:edge"; echo "push=true";
-              echo "published=${IMAGE}:edge"; } >>"$GITHUB_OUTPUT"
+            primary="${IMAGE}:edge"; extra=""; push=true
           else
-            { echo "tags=${IMAGE}:ci"; echo "push=false";
-              echo "published=${IMAGE}:ci"; } >>"$GITHUB_OUTPUT"
+            primary="${IMAGE}:ci"; extra=""; push=false
           fi
+          { echo "primary=$primary"; echo "extra=$extra"; echo "push=$push"; } >>"$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -63,16 +66,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Built and loaded, never pushed from here: publishing happens after the smoke
+      # test, so a broken image cannot be the one :latest points at. With a single tag,
+      # load also means the next step is inspecting the bytes that will be published.
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ steps.tags.outputs.push == 'true' }}
-          # And loaded, so the next step can run the image it just built instead of
-          # trusting the build's exit status. Legal to combine because there is exactly
-          # one platform here.
+          push: false
           load: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.tags.outputs.primary }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # Nothing is pinned here that the Dockerfile does not already pin; this is the
@@ -84,7 +87,7 @@ jobs:
       - name: Smoke test the image
         run: |
           set -eu
-          image="${{ steps.tags.outputs.published }}"
+          image="${{ steps.tags.outputs.primary }}"
           docker image inspect "$image" >/dev/null
           docker run --rm --entrypoint /opt/nemo-speech/bin/nemo-speech "$image" --version
           docker run --rm --entrypoint /opt/nemo-speech/bin/nemo-speech "$image" doctor
@@ -95,4 +98,18 @@ jobs:
           # visible inside it.
           docker run --rm -v "$GITHUB_WORKSPACE:/t:ro" --entrypoint python3 \
             "$image" -m unittest discover -s /t -p "test_*.py"
-          echo "published: $image"
+
+      # Plain `docker push` of images that already exist locally, after they passed:
+      # layers are reused, each tag fails on its own line, and nothing is published that
+      # the step above did not run.
+      - name: Publish
+        if: steps.tags.outputs.push == 'true'
+        run: |
+          set -eu
+          primary="${{ steps.tags.outputs.primary }}"
+          docker push "$primary"
+          for tag in ${{ steps.tags.outputs.extra }}; do
+            docker tag "$primary" "$tag"
+            docker push "$tag"
+          done
+          echo "published: $primary ${{ steps.tags.outputs.extra }}"
