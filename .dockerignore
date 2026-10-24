@@ -1,0 +1,14 @@
+# The build context is the Dockerfile plus adapter.py. Everything else here is
+# either repo furniture or 681 MB of model that belongs in a mounted volume, not
+# in a layer.
+.git
+.gitignore
+.dockerignore
+README.md
+LICENSE
+docker-compose.yml
+__pycache__/
+*.pyc
+models/
+*.gguf
+test_*.py

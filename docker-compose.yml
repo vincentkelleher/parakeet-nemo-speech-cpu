@@ -1,0 +1,100 @@
+# Two containers, one network namespace — the shape of the Kubernetes pod this recipe
+# comes from. `nemo-speech serve` binds 127.0.0.1 and has no authentication of any
+# kind, so it never gets a published port; the adapter shares its loopback and is the
+# only thing the host can reach.
+#
+#   docker compose up -d          # engine takes ~10-30 s to load 681 MiB of weights
+#   curl localhost:8080/ready
+#   curl -F "file=@note.ogg" localhost:8080/v1/audio/transcriptions
+#
+# Requires ./models/parakeet-tdt-0.6b-v3.q8_0.gguf — see README.md -> The model.
+
+name: parakeet
+
+services:
+  gateway:
+    image: ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0
+    command:
+      - python3
+      - /opt/adapter/adapter.py
+      - --listen
+      - 0.0.0.0:8080
+      - --upstream
+      - 127.0.0.1:8081
+      # Same ceiling as the engine's --max-upload-mb, so the adapter is the one that
+      # says "too big", in the error shape clients already parse.
+      - --max-upload-mb
+      - "32"
+      # Memory grows quadratically with recording length (README -> Long recordings).
+      # Raise this only together with mem_limit.
+      - --max-audio-seconds
+      - "180"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    mem_limit: 3g
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import sys, urllib.request
+          try:
+              sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=3).status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 120s
+
+  engine:
+    image: ghcr.io/vincentkelleher/nemo-speech-parakeet:0.2.0
+    command:
+      - /opt/nemo-speech/bin/nemo-speech
+      - serve
+      - --host
+      - 127.0.0.1
+      - --port
+      - "8081"
+      - --asr-model
+      - /models/parakeet-tdt-0.6b-v3.q8_0.gguf
+      # Explicit: the engine's default is `auto`, which would take a GPU slice from a
+      # machine that has one. This build carries no GPU backend at all.
+      - --device
+      - cpu
+      # Inference threads — `asr.backend.threads`, not `asr.threads` (the server
+      # rejects an unregistered key at startup). Match it to the CPU budget you give
+      # the container: oversubscribing throttles mid-inference instead of limiting work.
+      - --asr.backend.threads
+      - "4"
+      # HTTP workers: concurrent transcriptions. A different knob from the one above.
+      - --threads
+      - "2"
+      - --max-upload-mb
+      - "32"
+      - --no-ui
+    network_mode: service:gateway
+    volumes:
+      - ./models:/models:ro
+    # Measured 1 784 MiB peak on a 139 s clip, ~2 209 MiB at 210 s. 3 g is the ceiling
+    # the duration guard above is sized for.
+    mem_limit: 3g
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - /opt/nemo-speech/bin/nemo-speech
+        - health
+        - --url
+        - http://127.0.0.1:8081/health
+        - --timeout
+        - "10"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      # Weights, warmup pass, and on emulated amd64 a lot of page-in.
+      start_period: 120s
