@@ -182,8 +182,10 @@ Opus is roughly 110 minutes of speech.
 Raise it only together with `mem_limit`, using the curve above; 210 s already costs 72 s
 of compute, which is past most callers' patience anyway. Splitting long audio into chunks
 and joining transcripts is the alternative and is deliberately not implemented — this
-serves short voice notes, and there is a Whisper deployment in my lab for anything that
-ever stops being one.
+serves short voice notes, and nothing here is a general-purpose audio pipeline. If your
+workload stops being short, either raise the cap together with memory, or run a
+non-full-context engine beside this one; my own lab used to have one and no longer does,
+which is how I know the refusal is the kind failure.
 
 ## Performance, on real hardware
 
